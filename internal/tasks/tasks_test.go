@@ -594,6 +594,197 @@ tasks:
 	})
 }
 
+func TestLoadInclude(t *testing.T) {
+	t.Run("include merges tasks", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "tasks.d/*.yaml"
+defaults:
+  timeout: 5m
+tasks:
+  hello:
+    script: hello.sh
+`
+		incl := `
+tasks:
+  deploy:
+    script: deploy.sh
+    description: "Deploy app"
+`
+		if err := os.MkdirAll(filepath.Join(tmpDir, "tasks.d"), 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "deploy.yaml"), []byte(incl), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		cfg, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if _, ok := cfg.Tasks["hello"]; !ok {
+			t.Error("expected task 'hello' from main file")
+		}
+		if _, ok := cfg.Tasks["deploy"]; !ok {
+			t.Error("expected task 'deploy' from included file")
+		}
+		if cfg.Tasks["deploy"].Description != "Deploy app" {
+			t.Errorf("expected description 'Deploy app', got %q", cfg.Tasks["deploy"].Description)
+		}
+	})
+
+	t.Run("duplicate task rejected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "tasks.d/*.yaml"
+tasks:
+  hello:
+    script: hello.sh
+`
+		incl := `
+tasks:
+  hello:
+    script: other.sh
+`
+		if err := os.MkdirAll(filepath.Join(tmpDir, "tasks.d"), 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "dupe.yaml"), []byte(incl), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err == nil {
+			t.Fatal("expected error for duplicate task")
+		}
+		if want := `task "hello" defined in both tasks.yaml and dupe.yaml`; err.Error() != want {
+			t.Errorf("expected error %q, got %q", want, err.Error())
+		}
+	})
+
+	t.Run("duplicate across included files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "tasks.d/*.yaml"
+tasks: {}
+`
+		file1 := `
+tasks:
+  deploy:
+    script: deploy.sh
+`
+		file2 := `
+tasks:
+  deploy:
+    script: other.sh
+`
+		if err := os.MkdirAll(filepath.Join(tmpDir, "tasks.d"), 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "a.yaml"), []byte(file1), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "b.yaml"), []byte(file2), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err == nil {
+			t.Fatal("expected error for duplicate task across includes")
+		}
+		if want := `task "deploy" defined in both a.yaml and b.yaml`; err.Error() != want {
+			t.Errorf("expected error %q, got %q", want, err.Error())
+		}
+	})
+
+	t.Run("empty glob matches nothing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "nonexistent/*.yaml"
+tasks:
+  hello:
+    script: hello.sh
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		cfg, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if len(cfg.Tasks) != 1 {
+			t.Errorf("expected 1 task, got %d", len(cfg.Tasks))
+		}
+	})
+
+	t.Run("no include field", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+tasks:
+  hello:
+    script: hello.sh
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		cfg, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if len(cfg.Tasks) != 1 {
+			t.Errorf("expected 1 task, got %d", len(cfg.Tasks))
+		}
+	})
+
+	t.Run("included file validation error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "tasks.d/*.yaml"
+tasks: {}
+`
+		incl := `
+tasks:
+  bad:
+    script: bad.sh
+    input:
+      - name: x
+        type: string
+        values_url: "http://example.com"
+        enum: [a, b]
+`
+		if err := os.MkdirAll(filepath.Join(tmpDir, "tasks.d"), 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "bad.yaml"), []byte(incl), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err == nil {
+			t.Fatal("expected validation error from included file")
+		}
+	})
+}
+
 func ptr(f float64) *float64 {
 	return &f
 }

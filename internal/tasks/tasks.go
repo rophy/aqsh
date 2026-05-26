@@ -3,6 +3,7 @@ package tasks
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"time"
@@ -11,6 +12,7 @@ import (
 )
 
 type TasksConfig struct {
+	Include  []string           `yaml:"include"`
 	Defaults TaskDefaults       `yaml:"defaults"`
 	Tasks    map[string]TaskDef `yaml:"tasks"`
 }
@@ -179,23 +181,85 @@ func Load(path string) (*TasksConfig, error) {
 		return nil, fmt.Errorf("parsing tasks config: %w", err)
 	}
 
-	for taskName, task := range cfg.Tasks {
-		for _, input := range task.Input {
-			if input.ValuesURL != "" && len(input.Enum) > 0 {
-				return nil, fmt.Errorf("task %q input %q: values_url and enum are mutually exclusive", taskName, input.Name)
-			}
-			if input.ValuesCache != "" && input.ValuesURL == "" {
-				return nil, fmt.Errorf("task %q input %q: values_cache requires values_url", taskName, input.Name)
-			}
-			if input.ValuesCache != "" {
-				if _, err := time.ParseDuration(input.ValuesCache); err != nil {
-					return nil, fmt.Errorf("task %q input %q: invalid values_cache %q: %w", taskName, input.Name, input.ValuesCache, err)
-				}
+	if cfg.Tasks == nil {
+		cfg.Tasks = make(map[string]TaskDef)
+	}
+
+	sourceFile := filepath.Base(path)
+	taskSources := make(map[string]string)
+	for taskName := range cfg.Tasks {
+		taskSources[taskName] = sourceFile
+	}
+
+	if err := validateInputs(cfg.Tasks); err != nil {
+		return nil, err
+	}
+
+	baseDir := filepath.Dir(path)
+	for _, pattern := range cfg.Include {
+		if !filepath.IsAbs(pattern) {
+			pattern = filepath.Join(baseDir, pattern)
+		}
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid include pattern %q: %w", pattern, err)
+		}
+		for _, match := range matches {
+			if err := loadInclude(&cfg, match, taskSources); err != nil {
+				return nil, err
 			}
 		}
 	}
 
 	return &cfg, nil
+}
+
+func loadInclude(cfg *TasksConfig, path string, taskSources map[string]string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading included file %q: %w", path, err)
+	}
+
+	var included struct {
+		Tasks map[string]TaskDef `yaml:"tasks"`
+	}
+	if err := yaml.Unmarshal(data, &included); err != nil {
+		return fmt.Errorf("parsing included file %q: %w", path, err)
+	}
+
+	if err := validateInputs(included.Tasks); err != nil {
+		return err
+	}
+
+	source := filepath.Base(path)
+	for taskName, taskDef := range included.Tasks {
+		if existingSource, exists := taskSources[taskName]; exists {
+			return fmt.Errorf("task %q defined in both %s and %s", taskName, existingSource, source)
+		}
+		taskSources[taskName] = source
+		cfg.Tasks[taskName] = taskDef
+	}
+
+	return nil
+}
+
+func validateInputs(tasks map[string]TaskDef) error {
+	for taskName, task := range tasks {
+		for _, input := range task.Input {
+			if input.ValuesURL != "" && len(input.Enum) > 0 {
+				return fmt.Errorf("task %q input %q: values_url and enum are mutually exclusive", taskName, input.Name)
+			}
+			if input.ValuesCache != "" && input.ValuesURL == "" {
+				return fmt.Errorf("task %q input %q: values_cache requires values_url", taskName, input.Name)
+			}
+			if input.ValuesCache != "" {
+				if _, err := time.ParseDuration(input.ValuesCache); err != nil {
+					return fmt.Errorf("task %q input %q: invalid values_cache %q: %w", taskName, input.Name, input.ValuesCache, err)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
