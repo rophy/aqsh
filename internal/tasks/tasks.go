@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -196,16 +197,33 @@ func Load(path string) (*TasksConfig, error) {
 	}
 
 	baseDir := filepath.Dir(path)
+	absBaseDir, err := filepath.Abs(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving base directory: %w", err)
+	}
+	loaded := make(map[string]bool)
 	for _, pattern := range cfg.Include {
-		if !filepath.IsAbs(pattern) {
-			pattern = filepath.Join(baseDir, pattern)
+		if filepath.IsAbs(pattern) {
+			return nil, fmt.Errorf("include pattern %q must be relative", pattern)
 		}
-		matches, err := filepath.Glob(pattern)
+		resolved := filepath.Clean(filepath.Join(absBaseDir, pattern))
+		if rel, err := filepath.Rel(absBaseDir, resolved); err != nil || strings.HasPrefix(rel, "..") {
+			return nil, fmt.Errorf("include pattern %q escapes base directory", pattern)
+		}
+		matches, err := filepath.Glob(resolved)
 		if err != nil {
 			return nil, fmt.Errorf("invalid include pattern %q: %w", pattern, err)
 		}
 		for _, match := range matches {
-			if err := loadInclude(&cfg, match, taskSources); err != nil {
+			absMatch, err := filepath.Abs(match)
+			if err != nil {
+				return nil, fmt.Errorf("resolving include file %q: %w", match, err)
+			}
+			if loaded[absMatch] {
+				continue
+			}
+			loaded[absMatch] = true
+			if err := loadInclude(&cfg, absMatch, taskSources); err != nil {
 				return nil, err
 			}
 		}
@@ -221,10 +239,18 @@ func loadInclude(cfg *TasksConfig, path string, taskSources map[string]string) e
 	}
 
 	var included struct {
-		Tasks map[string]TaskDef `yaml:"tasks"`
+		Include  []string           `yaml:"include"`
+		Defaults TaskDefaults       `yaml:"defaults"`
+		Tasks    map[string]TaskDef `yaml:"tasks"`
 	}
 	if err := yaml.Unmarshal(data, &included); err != nil {
 		return fmt.Errorf("parsing included file %q: %w", path, err)
+	}
+	if len(included.Include) > 0 {
+		return fmt.Errorf("included file %q must not define include", path)
+	}
+	if included.Defaults != (TaskDefaults{}) {
+		return fmt.Errorf("included file %q must not define defaults", path)
 	}
 
 	if err := validateInputs(included.Tasks); err != nil {

@@ -3,6 +3,7 @@ package tasks
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -781,6 +782,144 @@ tasks:
 		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
 		if err == nil {
 			t.Fatal("expected validation error from included file")
+		}
+	})
+
+	t.Run("absolute include pattern rejected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - /etc/aqsh/tasks.d/*.yaml
+tasks: {}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err == nil {
+			t.Fatal("expected error for absolute include pattern")
+		}
+		if !strings.Contains(err.Error(), "must be relative") {
+			t.Errorf("expected 'must be relative' error, got %q", err.Error())
+		}
+	})
+
+	t.Run("path traversal rejected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "../other/*.yaml"
+tasks: {}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err == nil {
+			t.Fatal("expected error for path traversal")
+		}
+		if !strings.Contains(err.Error(), "escapes base directory") {
+			t.Errorf("expected 'escapes base directory' error, got %q", err.Error())
+		}
+	})
+
+	t.Run("duplicate glob matches deduplicated", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "tasks.d/*.yaml"
+  - "tasks.d/deploy.yaml"
+tasks: {}
+`
+		incl := `
+tasks:
+  deploy:
+    script: deploy.sh
+`
+		if err := os.MkdirAll(filepath.Join(tmpDir, "tasks.d"), 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "deploy.yaml"), []byte(incl), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		cfg, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if _, ok := cfg.Tasks["deploy"]; !ok {
+			t.Error("expected task 'deploy'")
+		}
+	})
+
+	t.Run("included file with defaults rejected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "tasks.d/*.yaml"
+tasks: {}
+`
+		incl := `
+defaults:
+  timeout: 10m
+tasks:
+  deploy:
+    script: deploy.sh
+`
+		if err := os.MkdirAll(filepath.Join(tmpDir, "tasks.d"), 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "bad.yaml"), []byte(incl), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err == nil {
+			t.Fatal("expected error for defaults in included file")
+		}
+		if !strings.Contains(err.Error(), "must not define defaults") {
+			t.Errorf("expected 'must not define defaults' error, got %q", err.Error())
+		}
+	})
+
+	t.Run("included file with nested include rejected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		main := `
+include:
+  - "tasks.d/*.yaml"
+tasks: {}
+`
+		incl := `
+include:
+  - "more/*.yaml"
+tasks:
+  deploy:
+    script: deploy.sh
+`
+		if err := os.MkdirAll(filepath.Join(tmpDir, "tasks.d"), 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.yaml"), []byte(main), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "tasks.d", "bad.yaml"), []byte(incl), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(filepath.Join(tmpDir, "tasks.yaml"))
+		if err == nil {
+			t.Fatal("expected error for nested include")
+		}
+		if !strings.Contains(err.Error(), "must not define include") {
+			t.Errorf("expected 'must not define include' error, got %q", err.Error())
 		}
 	})
 }
