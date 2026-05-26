@@ -1,3 +1,6 @@
+include:
+  - tasks.d/*.yaml
+
 defaults:
   timeout: 5m
   max_retry: 3
@@ -65,58 +68,3 @@ tasks:
     timeout: 1m
     max_retry: 0
     input: []
-
-  upgrade-db:
-    script: hello.sh
-    description: "Upgrade a database instance (values_url test)"
-    timeout: 1m
-    max_retry: 0
-    input:
-      - name: instance
-        env: NAME
-        required: true
-        type: string
-        values_url: "http://mock-values:8090/instances?user=${identity}"
-        values_cache: 30s
-
-  upgrade-db-regional:
-    script: hello.sh
-    description: "Upgrade a database instance by region (cascading test)"
-    timeout: 1m
-    max_retry: 0
-    input:
-      - name: region
-        env: REGION
-        required: true
-        type: string
-        enum: [us-east-1, eu-west-1]
-      - name: instance
-        env: NAME
-        required: true
-        type: string
-        values_url: "http://mock-values:8090/instances-by-region?region=${input.region}"
-
-  user-restricted:
-    script: hello.sh
-    description: "Task restricted to specific users"
-    timeout: 1m
-    max_retry: 0
-    allowed_users: ["system:serviceaccount:default:deploy-bot"]
-    input:
-      - name: name
-        env: NAME
-        required: true
-        type: string
-
-  user-or-group:
-    script: hello.sh
-    description: "Task restricted to specific users or groups"
-    timeout: 1m
-    max_retry: 0
-    allowed_users: ["system:serviceaccount:default:deploy-bot"]
-    allowed_groups: ["ops-team"]
-    input:
-      - name: name
-        env: NAME
-        required: true
-        type: string
