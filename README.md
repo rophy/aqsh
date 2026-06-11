@@ -439,12 +439,26 @@ tasks:
     input: [...]
 ```
 
+You can also set default authorization for all tasks:
+
+```yaml
+defaults:
+  allowed_users: [system:serviceaccount:deploy:deployer]
+  allowed_groups: [deploy-team, platform-team]
+
+tasks:
+  deploy:
+    script: /tasks/deploy.sh
+    input: [...]
+```
+
 - `allowed_users` matches the identity header against the list (exact match).
 - `allowed_groups` matches the groups header (comma-separated) against the list.
 - If both are set, the request is authorized if **either** matches (OR logic). This mirrors Kubernetes RBAC `RoleBinding.subjects` semantics.
+- Task-level `allowed_users` or `allowed_groups` overrides the matching default. Set `allowed_users: []` or `allowed_groups: []` on a task to clear that default for the task.
 - Returns 403 if neither matches.
 
-Tasks without `allowed_users` or `allowed_groups` are open to all users (or all authenticated users when `AQSH_REQUIRE_IDENTITY=true`).
+Tasks without task-level or default `allowed_users` or `allowed_groups` are open to all users, or all authenticated users when `AQSH_REQUIRE_IDENTITY=true`.
 
 ### Trust Boundary
 

@@ -19,23 +19,25 @@ type TasksConfig struct {
 }
 
 type TaskDefaults struct {
-	Timeout      string `yaml:"timeout"`
-	MaxRetry     int    `yaml:"max_retry"`
-	RetryDelay   string `yaml:"retry_delay"`
-	Queue        string `yaml:"queue"`
-	LogRetention string `yaml:"log_retention"`
+	Timeout       string   `yaml:"timeout"`
+	MaxRetry      int      `yaml:"max_retry"`
+	RetryDelay    string   `yaml:"retry_delay"`
+	Queue         string   `yaml:"queue"`
+	LogRetention  string   `yaml:"log_retention"`
+	AllowedUsers  []string `yaml:"allowed_users"`
+	AllowedGroups []string `yaml:"allowed_groups"`
 }
 
 type TaskDef struct {
-	Script        string   `yaml:"script"`
-	Description   string   `yaml:"description"`
-	Timeout       string   `yaml:"timeout"`
-	MaxRetry      *int     `yaml:"max_retry"`
-	RetryDelay    string   `yaml:"retry_delay"`
-	Queue         string   `yaml:"queue"`
-	AllowedUsers  []string `yaml:"allowed_users"`
-	AllowedGroups []string `yaml:"allowed_groups"`
-	Input         []Input  `yaml:"input"`
+	Script        string    `yaml:"script"`
+	Description   string    `yaml:"description"`
+	Timeout       string    `yaml:"timeout"`
+	MaxRetry      *int      `yaml:"max_retry"`
+	RetryDelay    string    `yaml:"retry_delay"`
+	Queue         string    `yaml:"queue"`
+	AllowedUsers  *[]string `yaml:"allowed_users"`
+	AllowedGroups *[]string `yaml:"allowed_groups"`
+	Input         []Input   `yaml:"input"`
 }
 
 type Input struct {
@@ -171,6 +173,16 @@ type ResolvedTask struct {
 	Input         []Input
 }
 
+func (d TaskDefaults) isZero() bool {
+	return d.Timeout == "" &&
+		d.MaxRetry == 0 &&
+		d.RetryDelay == "" &&
+		d.Queue == "" &&
+		d.LogRetention == "" &&
+		len(d.AllowedUsers) == 0 &&
+		len(d.AllowedGroups) == 0
+}
+
 func Load(path string) (*TasksConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -249,7 +261,7 @@ func loadInclude(cfg *TasksConfig, path string, taskSources map[string]string) e
 	if len(included.Include) > 0 {
 		return fmt.Errorf("included file %q must not define include", path)
 	}
-	if included.Defaults != (TaskDefaults{}) {
+	if !included.Defaults.isZero() {
 		return fmt.Errorf("included file %q must not define defaults", path)
 	}
 
@@ -331,6 +343,16 @@ func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 		queue = "default"
 	}
 
+	allowedUsers := c.Defaults.AllowedUsers
+	if task.AllowedUsers != nil {
+		allowedUsers = *task.AllowedUsers
+	}
+
+	allowedGroups := c.Defaults.AllowedGroups
+	if task.AllowedGroups != nil {
+		allowedGroups = *task.AllowedGroups
+	}
+
 	return &ResolvedTask{
 		Name:          name,
 		Script:        task.Script,
@@ -339,8 +361,8 @@ func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 		MaxRetry:      maxRetry,
 		RetryDelay:    retryDelayDur,
 		Queue:         queue,
-		AllowedUsers:  task.AllowedUsers,
-		AllowedGroups: task.AllowedGroups,
+		AllowedUsers:  allowedUsers,
+		AllowedGroups: allowedGroups,
 		Input:         task.Input,
 	}, nil
 }

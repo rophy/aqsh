@@ -221,6 +221,7 @@ defaults:
   timeout: 5m
   max_retry: 3
   queue: default
+  allowed_groups: [platform]
 
 tasks:
   test:
@@ -258,6 +259,14 @@ tasks:
 
 	if len(task.Input) != 1 {
 		t.Errorf("expected 1 input, got %d", len(task.Input))
+	}
+
+	resolved, err := cfg.Resolve("test")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(resolved.AllowedGroups) != 1 || resolved.AllowedGroups[0] != "platform" {
+		t.Errorf("expected inherited AllowedGroups [platform], got %v", resolved.AllowedGroups)
 	}
 }
 
@@ -316,13 +325,20 @@ func TestTasksConfigResolve(t *testing.T) {
 
 	t.Run("resolve allowed_groups", func(t *testing.T) {
 		cfgWithGroups := &TasksConfig{
+			Defaults: TaskDefaults{
+				AllowedGroups: []string{"platform"},
+			},
 			Tasks: map[string]TaskDef{
 				"restricted": {
 					Script:        "restricted.sh",
-					AllowedGroups: []string{"admin", "ops"},
+					AllowedGroups: &[]string{"admin", "ops"},
 				},
 				"open": {
-					Script: "open.sh",
+					Script:        "open.sh",
+					AllowedGroups: &[]string{},
+				},
+				"inherited": {
+					Script: "inherited.sh",
 				},
 			},
 		}
@@ -342,19 +358,33 @@ func TestTasksConfigResolve(t *testing.T) {
 		if len(resolved.AllowedGroups) != 0 {
 			t.Errorf("expected empty AllowedGroups, got %v", resolved.AllowedGroups)
 		}
+
+		resolved, err = cfgWithGroups.Resolve("inherited")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if len(resolved.AllowedGroups) != 1 || resolved.AllowedGroups[0] != "platform" {
+			t.Errorf("expected inherited AllowedGroups [platform], got %v", resolved.AllowedGroups)
+		}
 	})
 
 	t.Run("resolve allowed_users", func(t *testing.T) {
 		cfg := &TasksConfig{
+			Defaults: TaskDefaults{
+				AllowedUsers: []string{"platform-bot"},
+			},
 			Tasks: map[string]TaskDef{
 				"sa-only": {
 					Script:       "sa.sh",
-					AllowedUsers: []string{"system:serviceaccount:rdsma:sertdxkkk"},
+					AllowedUsers: &[]string{"system:serviceaccount:rdsma:sertdxkkk"},
 				},
 				"both": {
 					Script:        "both.sh",
-					AllowedUsers:  []string{"alice"},
-					AllowedGroups: []string{"ops"},
+					AllowedUsers:  &[]string{"alice"},
+					AllowedGroups: &[]string{"ops"},
+				},
+				"inherited": {
+					Script: "inherited.sh",
 				},
 			},
 		}
@@ -376,6 +406,14 @@ func TestTasksConfigResolve(t *testing.T) {
 		}
 		if len(resolved.AllowedGroups) != 1 || resolved.AllowedGroups[0] != "ops" {
 			t.Errorf("expected AllowedGroups [ops], got %v", resolved.AllowedGroups)
+		}
+
+		resolved, err = cfg.Resolve("inherited")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if len(resolved.AllowedUsers) != 1 || resolved.AllowedUsers[0] != "platform-bot" {
+			t.Errorf("expected inherited AllowedUsers [platform-bot], got %v", resolved.AllowedUsers)
 		}
 	})
 }

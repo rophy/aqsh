@@ -740,13 +740,20 @@ func TestHandleSubmitTaskGroupAuthorization(t *testing.T) {
 	defer rdb.Close()
 
 	tasksConfig := &tasks.TasksConfig{
+		Defaults: tasks.TaskDefaults{
+			AllowedGroups: []string{"platform"},
+		},
 		Tasks: map[string]tasks.TaskDef{
 			"restricted": {
 				Script:        "restricted.sh",
-				AllowedGroups: []string{"admin", "ops"},
+				AllowedGroups: &[]string{"admin", "ops"},
 			},
 			"open": {
-				Script: "open.sh",
+				Script:        "open.sh",
+				AllowedGroups: &[]string{},
+			},
+			"inherited": {
+				Script: "inherited.sh",
 			},
 		},
 	}
@@ -813,6 +820,32 @@ func TestHandleSubmitTaskGroupAuthorization(t *testing.T) {
 		}
 	})
 
+	t.Run("default allowed group passes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/inherited", strings.NewReader(`{}`))
+		req.SetPathValue("name", "inherited")
+		req.Header.Set("X-Forwarded-Groups", "dev,platform")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("default allowed group rejects non-member", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/inherited", strings.NewReader(`{}`))
+		req.SetPathValue("name", "inherited")
+		req.Header.Set("X-Forwarded-Groups", "dev,staging")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		}
+	})
+
 	t.Run("groups with spaces trimmed", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/tasks/restricted", strings.NewReader(`{}`))
 		req.SetPathValue("name", "restricted")
@@ -833,15 +866,21 @@ func TestHandleSubmitTaskUserAuthorization(t *testing.T) {
 	defer rdb.Close()
 
 	tasksConfig := &tasks.TasksConfig{
+		Defaults: tasks.TaskDefaults{
+			AllowedUsers: []string{"platform-bot"},
+		},
 		Tasks: map[string]tasks.TaskDef{
 			"sa-only": {
 				Script:       "sa.sh",
-				AllowedUsers: []string{"system:serviceaccount:rdsma:sertdxkkk"},
+				AllowedUsers: &[]string{"system:serviceaccount:rdsma:sertdxkkk"},
 			},
 			"users-and-groups": {
 				Script:        "both.sh",
-				AllowedUsers:  []string{"alice"},
-				AllowedGroups: []string{"ops"},
+				AllowedUsers:  &[]string{"alice"},
+				AllowedGroups: &[]string{"ops"},
+			},
+			"inherited": {
+				Script: "inherited.sh",
 			},
 		},
 	}
@@ -887,6 +926,32 @@ func TestHandleSubmitTaskUserAuthorization(t *testing.T) {
 	t.Run("no identity returns 403 for user-restricted task", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/tasks/sa-only", strings.NewReader(`{}`))
 		req.SetPathValue("name", "sa-only")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		}
+	})
+
+	t.Run("default allowed user passes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/inherited", strings.NewReader(`{}`))
+		req.SetPathValue("name", "inherited")
+		req.Header.Set("X-Forwarded-User", "platform-bot")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("default allowed user rejects non-member", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/inherited", strings.NewReader(`{}`))
+		req.SetPathValue("name", "inherited")
+		req.Header.Set("X-Forwarded-User", "bob")
 		rec := httptest.NewRecorder()
 
 		s.handleSubmitTask(rec, req)
