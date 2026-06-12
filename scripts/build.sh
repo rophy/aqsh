@@ -13,14 +13,14 @@ else
     exit 1
 fi
 
-# Get version from git
-VERSION=$(git describe --tags 2>/dev/null || echo "dev")
+# Get version from VERSION file
+VERSION=$(cat VERSION | tr -d '[:space:]')
 
 echo "Building aqsh with $RUNTIME..."
 echo "Version: $VERSION"
 
 # Build image
-$RUNTIME build --build-arg VERSION="$VERSION" -t aqsh:latest .
+$RUNTIME build -t aqsh:latest .
 
 # Tag with version
 $RUNTIME tag aqsh:latest "rophy/aqsh:${VERSION}"
