@@ -16,7 +16,7 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 
 # Build binary (coverage instrumentation when DEBUG=true)
-RUN VERSION=$(cat VERSION) && \
+RUN VERSION=$(tr -d '[:space:]' < VERSION) && \
     if [ "$DEBUG" = "true" ]; then \
         CGO_ENABLED=0 GOOS=linux go build -cover -covermode=atomic -ldflags="-X main.Version=${VERSION}" -o aqsh ./cmd/aqsh; \
     else \
