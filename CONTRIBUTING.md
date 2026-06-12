@@ -69,6 +69,15 @@ go test ./...
 AQSH_URL=http://localhost:8080 ./test/integration_test.sh
 ```
 
+## Releasing
+
+Releases are driven by the `VERSION` file at the repo root. To release a new version:
+
+1. Bump `VERSION` in a PR (e.g. `0.6.0` → `0.7.0`)
+2. Merge to `main` — CI will automatically create the git tag, push the Docker image, and create a GitHub release
+
+Git tags are protected and can only be created by CI.
+
 ## Key Dependencies
 
 | Package | Purpose |

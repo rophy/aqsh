@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -44,46 +43,66 @@ jobs:
         with:
           context: .
           push: false
-          build-args: VERSION=${{ github.ref_name }}
 
-  publish:
-    if: startsWith(github.ref, 'refs/tags/')
+  release:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [test, integration, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
-      id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.DEPLOY_KEY_CI_TAG }}
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - name: Read VERSION
+        id: version
+        run: echo "value=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists, skipping"
+          else
+            git tag "$VERSION"
+            git push origin "$VERSION"
+          fi
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
-        id: meta
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
-
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - name: Build and push image
         id: push
-        with:
-          context: .
-          push: true
-          build-args: VERSION=${{ github.ref_name }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_REF: ${{ env.IMAGE }}:${{ github.ref_name }}
-          DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          NOTES=$(printf '## Container Image\n\n```\ndocker pull %s\n```\n\nDigest: `%s`' "$IMAGE_REF" "$DIGEST")
-          gh release create "${{ github.ref_name }}" --generate-notes --notes "$NOTES"
+          VERSION="${{ steps.version.outputs.value }}"
+          TAG="${{ env.IMAGE }}:${VERSION}"
+          if docker manifest inspect "$TAG" >/dev/null 2>&1; then
+            echo "Image $TAG already exists, skipping"
+          else
+            docker buildx build --push \
+              --tag "$TAG" \
+              --tag "${{ env.IMAGE }}:latest" \
+              --label "org.opencontainers.image.version=${VERSION}" \
+              .
+          fi
+          echo "image_ref=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists, skipping"
+          else
+            IMAGE_REF="${{ steps.push.outputs.image_ref }}"
+            NOTES=$(printf '## Container Image\n\n```\ndocker pull %s\n```' "$IMAGE_REF")
+            gh release create "$VERSION" --generate-notes --notes "$NOTES"
+          fi
